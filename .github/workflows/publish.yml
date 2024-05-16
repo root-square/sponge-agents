@@ -1,0 +1,142 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      product-version:
+        description: 'Product Version'
+        required: true
+        default: '1.0.0'
+        type: string
+      file-version:
+        description: 'File Version'
+        required: true
+        default: '1.0.0'
+        type: string
+      remove-debug-symbols:
+        description: 'Remove Debug Symbols'
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+        
+      - name: Build
+        run: |
+          # Build for x64
+          ./tools/publish.ps1 -target Sponge/Sponge.csproj --runtime win-x64 -productName "Sponge" -fileDesc "Sponge" -company "Sponge Contributors" -copyright "Copyright (c) 2024 Sponge Contributors all rights reserved." -productVersion "${{ inputs.product-version }}" -fileVersion "${{ inputs.file-version }}" -excludeSymbols $${{ inputs.remove-debug-symbols }}
+          
+          # Build for ARM64
+          ./tools/publish.ps1 -target Sponge/Sponge.csproj --runtime win-arm64 -productName "Sponge" -fileDesc "Sponge" -company "Sponge Contributors" -copyright "Copyright (c) 2024 Sponge Contributors all rights reserved." -productVersion "${{ inputs.product-version }}" -fileVersion "${{ inputs.file-version }}" -excludeSymbols $${{ inputs.remove-debug-symbols }}
+        shell: pwsh
+        
+      - name: Copy Artifacts
+        run: |      
+          New-Item -Path "./artifacts" -Name "packages" -ItemType "directory"
+          New-Item -Path "./artifacts/packages" -Name "x64" -ItemType "directory"
+          New-Item -Path "./artifacts/packages" -Name "arm64" -ItemType "directory"
+          
+          # Copy x64 build artifacts.
+          Copy-Item -Path "./artifacts/publish/Sponge/release_win-x64/*" -Destination "./artifacts/packages/x64" -Recurse
+          
+          # Copy ARM64 build artifacts.
+          Copy-Item -Path "./artifacts/publish/Sponge/release_win-arm64/*" -Destination "./artifacts/packages/arm64" -Recurse
+        shell: pwsh
+        
+      - name: Copy Docs
+        run: |
+          New-Item -Path "./artifacts/packages/x64" -Name "docs" -ItemType "directory"
+          New-Item -Path "./artifacts/packages/arm64" -Name "docs" -ItemType "directory"
+          Copy-Item -Path "./docs/*" -Destination "./artifacts/packages/x64/docs" -Recurse
+          Copy-Item -Path "./docs/*" -Destination "./artifacts/packages/arm64/docs" -Recurse
+        shell: pwsh
+        
+      - name: Download VIPS(x64)
+        uses: robinraju/release-downloader@v1.7
+        with:
+          repository: "libvips/build-win64-mxe"
+          latest: true
+          fileName: "vips-dev-w64-web-*-static.zip"
+          
+      - name: Download VIPS(ARM64)
+        uses: robinraju/release-downloader@v1.7
+        with:
+          repository: "libvips/build-win64-mxe"
+          latest: true
+          fileName: "vips-dev-arm64-web-*-static.zip"
+          
+      - name: Decompress VIPS
+        run: |
+          Expand-Archive -Path "./vips-dev-w64-web-*-static.zip" -DestinationPath "./artifacts/temp/vips_x64"
+          Expand-Archive -Path "./vips-dev-arm64-web-*-static.zip" -DestinationPath "./artifacts/temp/vips_arm64"
+          Copy-Item -Path "./artifacts/temp/vips_x64/vips-dev-*/bin/*" -Destination "./artifacts/packages/x64" -Recurse
+          Copy-Item -Path "./artifacts/temp/vips_arm64/vips-dev-*/bin/*" -Destination "./artifacts/packages/arm64" -Recurse
+        shell: pwsh
+        
+      - name: Compress Artifacts
+        run: |
+          Compress-Archive -Path ./artifacts/packages/x64/* -DestinationPath ./artifacts/sponge-x64.zip -Force
+          Compress-Archive -Path ./artifacts/packages/arm64/* -DestinationPath ./artifacts/sponge-arm64.zip -Force
+        shell: pwsh 
+        
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: artifacts
+          path: |
+            ./artifacts/sponge-x64.zip
+            ./artifacts/sponge-arm64.zip
+  
+  release:
+    needs: build
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: artifacts
+          
+      - id: create-release
+        name: Create a Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ inputs.product-version }}
+          release_name: v${{ inputs.product-version }}
+          draft: false
+          prerelease: false
+          
+      - name: Upload Artifacts(x64)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create-release.outputs.upload_url }}
+          asset_path: ./sponge-x64.zip
+          asset_name: sponge-v${{ inputs.product-version }}-x64.zip
+          asset_content_type: application/zip
+          
+      - name: Upload Artifacts(ARM64)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create-release.outputs.upload_url }}
+          asset_path: ./sponge-arm64.zip
+          asset_name: sponge-v${{ inputs.product-version }}-arm64.zip
+          asset_content_type: application/zip
