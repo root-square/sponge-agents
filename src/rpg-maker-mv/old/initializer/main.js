@@ -4,9 +4,10 @@
 
 PluginManager.setup($plugins);
 
-// import mx-packer plugins
+// ::START OF SPONGE INITIALIZER::
 PluginManager._path= 'js/plugins/';
-PluginManager.loadScript('mx-agent/init.js');
+PluginManager.loadScript('sponge/init.js');
+// ::END OF SPONGE INITIALIZER::
 
 window.onload = function() {
     SceneManager.run(Scene_Boot);
